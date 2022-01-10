@@ -1,0 +1,215 @@
+---
+title: "surveyCV: Cross Validation Based on Survey Design"
+author: "Cole Guerin, Thomas McMahon, Jerzy Wieczorek"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{intro}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Introduction to `surveyCV`
+
+This package implements cross validation (CV) for complex survey data, by accounting for strata, clusters, FPCs, and survey weights when creating CV folds as well as when calculating test-set loss estimates (currently either mean squared error (MSE) for linear models, or binary cross-entropy for logistic models). It is meant to work smoothly with [the `survey` package](https://cran.r-project.org/package=survey).
+
+To understand why we believe it's important to account for survey design when carrying out CV, please see our journal paper submitted to the *Stat* special issue from the SDSS 2021 conference [currently under review]. (A copy can be found in the `data-raw` folder of our GitHub repository as [`Stat_SDSS_submission.pdf`](https://github.com/ColbyStatSvyRsch/surveyCV/blob/master/data-raw/Stat_SDSS_submission.pdf).)  
+Briefly, the problem is that standard CV assumes exchangeable data, which is not true of most complex sampling designs. We argue (1) that CV folds should mimic the sampling design (so that we're honest about how much the model-fits will vary across "samples like this one"), and (2) that test set MSEs should be averaged and weighted in ways that generalize to the full population from which the sample was drawn, assuming that is the population for which the models will be applied.
+
+This vignette briefly illustrates how to use `surveyCV` with several common types of sampling design. We provide three equivalent ways to carry out CV: direct control with `cv.svy`, use of an existing survey design object with `cv.svydesign`, or use of an existing survey GLM object with `cv.svyglm`.
+
+
+
+# Setup
+
+```{r setup-packages, message=FALSE}
+# We set a random seed in this vignette only to ensure
+#   that our discussion will match the CV output;
+# otherwise, each time we reran the vignette, we'd get different CV folds
+set.seed(2022)
+
+library(surveyCV)
+data("NSFG_data")
+library(survey)
+data("api")
+```
+
+
+
+# Direct control with `cv.svy`
+
+First, we borrow some examples from the documentation for `survey::svyglm()`, based on the `api` data (the Academic Performance Index for California schools in the year 2000).
+
+Say that we want to carry out complex survey CV for several linear models, and we are working with the stratified sample in `apistrat`. Using `cv.svy()`, we specify the dataset; the formulas for the models being compared; the number of folds; and any necessary information about the sampling design. For this particular stratified design, we must specify the strata variable, the weights variable, and the FPC variable.
+
+```{r}
+#stratified sample
+cv.svy(apistrat, c("api00~ell",
+                   "api00~ell+meals",
+                   "api00~ell+meals+mobility"),
+       nfolds = 5, strataID = "stype", weightsID = "pw", fpcID = "fpc")
+```
+
+The 2nd model (`api00~ell+meals`) appears to have the lowest average test MSE (in the `mean`) column, although its performance does not differ much from the 3rd model and the difference between them is much smaller than either of their standard errors (in the `SE` column).
+
+If we were to use the single-stage cluster sample in `apiclus1` instead, the command would be similar but we would need to specify clusters instead of strata:
+
+```{r}
+# one-stage cluster sample
+cv.svy(apiclus1, c("api00~ell",
+                   "api00~ell+meals",
+                   "api00~ell+meals+mobility"),
+       nfolds = 5, clusterID = "dnum", weightsID = "pw", fpcID = "fpc")
+```
+
+On the other hand, if we are working with a simple random sample as in `apisrs`, we could just use standard CV instead of complex survey CV to generate the folds. However, complex survey CV may still be useful with a SRS if we want to account for the finite population correction (FPC) when estimating the SEs of our CV MSEs.
+
+```{r}
+# simple random sample
+cv.svy(apisrs, c("api00~ell",
+                 "api00~ell+meals",
+                 "api00~ell+meals+mobility"),
+       nfolds = 5, fpcID = "fpc")
+```
+
+Note that our intent in this vignette is **not** to compare the stratified sample results vs. the cluster sample results vs. the SRS results. We show 3 approaches only to illustrate how the code depends on the sampling design. Each of these samples was taken in a different way, and so it should be analyzed in a different way. In most cases, the data analyst will have only one dataset, and they ought to choose the right form of CV based on that one dataset's sampling design.
+
+(But if we *do* have different datasets taken under different sampling designs from the same population, it's plausible that the "best model" might differ across sampling designs. For instance, a stratified sample will likely have more precision than a cluster sample with the same number of ultimate observation units---so it's possible that the stratified-sample's CV would choose a larger model than the cluster-sample's CV. That is, the stratified sample might have enough precision to fit a larger model without overfitting, while CV might show us that the cluster sample is overfitting when it tries to fit a larger model.)
+
+Finally, we show an example from a different dataset, the 2015-2017 National Survey of Family Growth (NSFG), which uses clusters nested within strata as well as unequal sample weights. In this case we are using 4 folds, not 5 as above, because each stratum only has 4 clusters.
+
+```{r}
+# complex sample from NSFG
+library(splines)
+cv.svy(NSFG_data, c("income ~ ns(age, df = 1)",
+                    "income ~ ns(age, df = 2)",
+                    "income ~ ns(age, df = 3)",
+                    "income ~ ns(age, df = 4)",
+                    "income ~ ns(age, df = 5)",
+                    "income ~ ns(age, df = 6)"),
+       nfolds = 4,
+       strataID = "strata", clusterID = "SECU",
+       nest = TRUE, weightsID = "wgt")
+```
+
+Here we tend to see that the spline with 3 degrees of freedom fits a little better than the others, but the differences between models are mostly smaller than the SEs.
+
+
+
+# Using a survey design object with `cv.svydesign`
+
+When using the `survey` package, we will often create a `svydesign` object in order to calculate means and totals, fit GLMs, etc. In that case, instead of using `cv.svy()`, it is more convenient to use `cv.svydesign()`, which will read the relevant information out of the `svydesign` object and internally pass it along to `cv.svy()` for us.
+
+We repeat the `api` stratified, cluster, and SRS examples above using this `cv.svydesign()` approach.
+
+```{r}
+#stratified sample
+dstrat <- svydesign(id = ~1, strata = ~stype, weights = ~pw, data = apistrat, fpc = ~fpc)
+cv.svydesign(formulae = c("api00~ell",
+                          "api00~ell+meals",
+                          "api00~ell+meals+mobility"),
+             design_object = dstrat, nfolds = 5)
+
+# one-stage cluster sample
+dclus1 <- svydesign(id = ~dnum, weights = ~pw, data = apiclus1, fpc = ~fpc)
+cv.svydesign(formulae = c("api00~ell",
+                          "api00~ell+meals",
+                          "api00~ell+meals+mobility"),
+             design_object = dclus1, nfolds = 5)
+
+# simple random sample
+dsrs <- svydesign(id = ~1, data = apisrs, fpc = ~fpc)
+cv.svydesign(formulae = c("api00~ell",
+                          "api00~ell+meals",
+                          "api00~ell+meals+mobility"),
+             design_object = dsrs, nfolds = 5)
+```
+
+Next, we repeat the NSFG example using this approach.
+
+```{r}
+NSFG.svydes <- svydesign(id = ~SECU, strata = ~strata, nest = TRUE,
+                         weights = ~wgt, data = NSFG_data)
+cv.svydesign(formulae = c("income ~ ns(age, df = 1)",
+                          "income ~ ns(age, df = 2)",
+                          "income ~ ns(age, df = 3)",
+                          "income ~ ns(age, df = 4)",
+                          "income ~ ns(age, df = 5)",
+                          "income ~ ns(age, df = 6)"),
+             design_object = NSFG.svydes, nfolds = 4)
+```
+
+
+
+# Using a survey GLM object with `cv.svyglm`
+
+Finally, if we have already fit a `svyglm` object, we can use `cv.svyglm()` which will read the formula as well as the survey design information and internally pass it along to `cv.svy()` for us. However, this approach only works for one GLM at time instead of comparing several models in a single function.
+
+We repeat the `api` stratified, cluster, and SRS examples above using this `cv.svyglm()` approach, with the help of the `surveydesign` objects already created above.
+
+```{r}
+#stratified sample
+glmstrat <- svyglm(api00 ~ ell+meals+mobility, design = dstrat)
+cv.svyglm(glmstrat, nfolds = 5)
+
+# one-stage cluster sample
+glmclus1 <- svyglm(api00 ~ ell+meals+mobility, design = dclus1)
+cv.svyglm(glmclus1, nfolds = 5)
+
+# simple random sample
+glmsrs <- svyglm(api00 ~ ell+meals+mobility, design = dsrs)
+cv.svyglm(glmsrs, nfolds = 5)
+```
+
+Next, we repeat the NSFG example using this approach.
+
+```{r}
+NSFG.svyglm <- svyglm(income ~ ns(age, df = 3), design = NSFG.svydes)
+cv.svyglm(glm_object = NSFG.svyglm, nfolds = 4)
+```
+
+
+
+# Fitting a logistic model instead of linear
+
+If we have a binary response variable and wish to fit a logistic regression instead, we can use `family = quasibinomial()` in the call to `svyglm()` and feed that directly into `cv.svyglm()`:
+
+```{r}
+NSFG.svyglm.logistic <- svyglm(LBW ~ ns(age, df = 3), design = NSFG.svydes,
+                               family = quasibinomial())
+cv.svyglm(glm_object = NSFG.svyglm.logistic, nfolds = 4)
+```
+
+In this case, the `mean` column shows the average of the binary cross-entropy loss $-[y_i \log(\hat y_i) + (1-y_i)\log(1-\hat y_i)]$ rather than MSE.
+
+Or we can set `method = "logistic"` in `cv.svydesign()` or in `cv.svy()`:
+
+```{r}
+cv.svydesign(formulae = c("LBW ~ ns(age, df = 1)",
+                          "LBW ~ ns(age, df = 2)",
+                          "LBW ~ ns(age, df = 3)",
+                          "LBW ~ ns(age, df = 4)",
+                          "LBW ~ ns(age, df = 5)",
+                          "LBW ~ ns(age, df = 6)"),
+             design_object = NSFG.svydes, nfolds = 4,
+             method = "logistic")
+
+cv.svy(NSFG_data, c("LBW ~ ns(age, df = 1)",
+                    "LBW ~ ns(age, df = 2)",
+                    "LBW ~ ns(age, df = 3)",
+                    "LBW ~ ns(age, df = 4)",
+                    "LBW ~ ns(age, df = 5)",
+                    "LBW ~ ns(age, df = 6)"),
+       nfolds = 4,
+       strataID = "strata", clusterID = "SECU",
+       nest = TRUE, weightsID = "wgt",
+       method = "logistic")
+```
+
+

@@ -1,0 +1,69 @@
+#' CV for \code{svyglm} objects
+#'
+#' Wrapper function which takes a \code{\link[survey]{svyglm}} object
+#' (which itself contains a \code{svydesign} object)
+#' and passes it through \code{\link{cv.svydesign}} to \code{\link{cv.svy}}.
+#' Chooses linear or logistic regression based on the \code{svyglm} object's value of \code{family}.
+#' Returns survey CV estimates of the mean loss for each model
+#' (MSE for linear models, or binary cross-entropy for logistic models).
+#' If you have created a \code{svydesign} object and want to compare several \code{svyglm} models,
+#' you may prefer the function \code{\link{cv.svydesign}}.
+#'
+#' @param glm_object Name of a \code{svyglm} object created from the \code{survey} package
+#' @param nfolds Number of folds to be used during cross validation, defaults to
+#'   5
+#' @return Object of class \code{svystat}, which is a named vector with the survey CV estimate of the mean loss
+#'   (MSE for linear models, or binary cross-entropy for logistic models)
+#'   for the model in the \code{svyglm} object provided to \code{glm_object};
+#'   and with a \code{var} attribute giving the variance.
+#'   See \code{\link[survey]{surveysummary}} for details.
+#' @seealso \code{\link[survey]{surveysummary}}, \code{\link[survey]{svydesign}}, \code{\link[survey]{svyglm}}
+#' @seealso \code{\link{cv.svydesign}} to use with a \code{svydesign} object for comparing several \code{svyglm} models
+#' @examples
+#' # Calculate CV MSE and its SE under one `svyglm` model
+#' # for a stratified sample and a one-stage cluster sample,
+#' # from the `survey` package
+#' library(survey)
+#' data("api", package = "survey")
+#' # stratified sample
+#' dstrat <- svydesign(id = ~1, strata = ~stype, weights = ~pw, data = apistrat,
+#'                     fpc = ~fpc)
+#' glmstrat <- svyglm(api00 ~ ell+meals+mobility, design = dstrat)
+#' cv.svyglm(glmstrat, nfolds = 5)
+#' # one-stage cluster sample
+#' dclus1 <- svydesign(id = ~dnum, weights = ~pw, data = apiclus1, fpc = ~fpc)
+#' glmclus1 <- svyglm(api00 ~ ell+meals+mobility, design = dclus1)
+#' cv.svyglm(glmclus1, nfolds = 5)
+#'
+#' # Calculate CV MSE and its SE under one `svyglm` model
+#' # for a stratified cluster sample with clusters nested within strata
+#' data(NSFG_data)
+#' library(splines)
+#' NSFG.svydes <- svydesign(id = ~SECU, strata = ~strata, nest = TRUE,
+#'                          weights = ~wgt, data = NSFG_data)
+#' NSFG.svyglm <- svyglm(income ~ ns(age, df = 3), design = NSFG.svydes)
+#' cv.svyglm(glm_object = NSFG.svyglm, nfolds = 4)
+#' @export
+
+# TODO: Write formal unit tests
+
+cv.svyglm <- function(glm_object, nfolds = 5) {
+
+  family <- glm_object$family$family
+  stopifnot(family %in% c("gaussian", "quasibinomial"))
+  method <- if (family == "gaussian") {
+    "linear"
+  } else if (family == "quasibinomial" ) {
+      "logistic"
+  }
+
+  formulae <- deparse1(glm_object[["formula"]])
+  design_object <- glm_object[["survey.design"]]
+
+  # Runs our cv.svydesign() function using the pieces pulled from the glm object,
+  # which will later push all of this information into our general cv.svy() function.
+  cv.svydesign(design_object = design_object, formulae = formulae,
+               nfolds = nfolds, method = method)
+
+}
+
