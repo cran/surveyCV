@@ -5,21 +5,29 @@
 #' and passes it into \code{\link{cv.svy}}.
 #' Returns survey CV estimates of the mean loss for each model
 #' (MSE for linear models, or binary cross-entropy for logistic models).
+#'
 #' If you have already fitted a \code{svyglm},
 #' you may prefer the convenience wrapper function
 #' \code{\link{cv.svyglm}}.
-
+#'
+#' For models other than linear or logistic regression,
+#' you can use \code{\link{folds.svy}} or \code{\link{folds.svydesign}} to generate
+#' CV fold IDs that respect any stratification or clustering in the survey design.
+#' You can then carry out K-fold CV as usual,
+#' taking care to also use the survey design features and survey weights
+#' when fitting models in each training set
+#' and also when evaluating models against each test set.
 #'
 #' @param design_object Name of a \code{svydesign} object created using the \code{survey}
-#'   package. The argument \code{id} (also \code{strata}, \code{fpc}, and/or \code{weights} if used)
-#'   must be specified as formulas, e.g. \code{svydesign(ids = ~MyPSUs, ...)}.
-#'   We do not yet support use of \code{probs} or \code{pps}.
+#'   package. We do not yet support use of \code{probs} or \code{pps}.
 #' @param formulae Vector of formulas (as strings) for the GLMs to be compared in
 #'   cross validation
 #' @param nfolds Number of folds to be used during cross validation, defaults to
 #'   5
 #' @param method String, must be either "linear" or "logistic", determines type of
 #'   model fit during cross validation, defaults to linear
+#' @param na.rm Whether to drop cases with missing values when taking `svymean`
+#'   of test losses
 #' @return Object of class \code{svystat}, which is a named vector of survey CV estimates of the mean loss
 #'   (MSE for linear models, or binary cross-entropy for logistic models) for each model,
 #'   with names ".Model_1", ".Model_2", etc. corresponding to the models provided in \code{formulae};
@@ -28,9 +36,9 @@
 #' @seealso \code{\link[survey]{surveysummary}}, \code{\link[survey]{svydesign}}
 #' @seealso \code{\link{cv.svyglm}} for a wrapper to use with a \code{svyglm} object
 #' @examples
-#' # Compare CV MSEs and their SEs under 3 models
+#' # Compare CV MSEs and their SEs under 3 linear models
 #' # for a stratified sample and a one-stage cluster sample,
-#' # from the `survey` package
+#' # using data from the `survey` package
 #' library(survey)
 #' data("api", package = "survey")
 #' # stratified sample
@@ -47,7 +55,7 @@
 #'                           "api00~ell+meals+mobility"),
 #'              design_object = dclus1, nfolds = 5)
 #'
-#' # Compare CV MSEs and their SEs under 3 models
+#' # Compare CV MSEs and their SEs under 3 linear models
 #' # for a stratified cluster sample with clusters nested within strata
 #' data(NSFG_data)
 #' library(splines)
@@ -57,6 +65,18 @@
 #'                           "income ~ ns(age, df = 3)",
 #'                           "income ~ ns(age, df = 4)"),
 #'              design_object = NSFG.svydes, nfolds = 4)
+#'
+#' # Logistic regression example, using the same stratified cluster sample;
+#' # instead of CV MSE, we calculate CV binary cross-entropy loss,
+#' # where (as with MSE) lower values indicate better fitting models
+#' # (NOTE: na.rm=TRUE is not usually ideal;
+#' #  it's used below purely for convenience, to keep the example short,
+#' #  but a thorough analysis would look for better ways to handle the missing data)
+#' cv.svydesign(formulae = c("KnowPreg ~ ns(age, df = 1)",
+#'                           "KnowPreg ~ ns(age, df = 2)",
+#'                           "KnowPreg ~ ns(age, df = 3)"),
+#'              design_object = NSFG.svydes, nfolds = 4,
+#'              method = "logistic", na.rm = TRUE)
 #' @export
 
 
@@ -64,7 +84,8 @@
 
 
 
-cv.svydesign <- function(design_object, formulae, nfolds = 5, method = c("linear", "logistic")) {
+cv.svydesign <- function(design_object, formulae, nfolds = 5,
+                         method = c("linear", "logistic"), na.rm = FALSE) {
   # When a survey design object is specified,
   # then the function can pull pieces of information needed from the design object
 
@@ -125,7 +146,8 @@ cv.svydesign <- function(design_object, formulae, nfolds = 5, method = c("linear
   cv.svy(Data = .data, formulae = formulae, nfolds = nfolds,
          clusterID = clusterID, strataID = strataID, nest = nest,
          fpcID = fpcID, method = method,
-         weightsID = weightsID)
+         weightsID = weightsID,
+         na.rm = na.rm)
 
 }
 

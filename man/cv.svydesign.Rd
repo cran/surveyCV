@@ -8,14 +8,13 @@ cv.svydesign(
   design_object,
   formulae,
   nfolds = 5,
-  method = c("linear", "logistic")
+  method = c("linear", "logistic"),
+  na.rm = FALSE
 )
 }
 \arguments{
 \item{design_object}{Name of a \code{svydesign} object created using the \code{survey}
-package. The argument \code{id} (also \code{strata}, \code{fpc}, and/or \code{weights} if used)
-must be specified as formulas, e.g. \code{svydesign(ids = ~MyPSUs, ...)}.
-We do not yet support use of \code{probs} or \code{pps}.}
+package. We do not yet support use of \code{probs} or \code{pps}.}
 
 \item{formulae}{Vector of formulas (as strings) for the GLMs to be compared in
 cross validation}
@@ -25,6 +24,9 @@ cross validation}
 
 \item{method}{String, must be either "linear" or "logistic", determines type of
 model fit during cross validation, defaults to linear}
+
+\item{na.rm}{Whether to drop cases with missing values when taking `svymean`
+of test losses}
 }
 \value{
 Object of class \code{svystat}, which is a named vector of survey CV estimates of the mean loss
@@ -39,14 +41,24 @@ and a vector of model formulas (as strings),
 and passes it into \code{\link{cv.svy}}.
 Returns survey CV estimates of the mean loss for each model
 (MSE for linear models, or binary cross-entropy for logistic models).
+}
+\details{
 If you have already fitted a \code{svyglm},
 you may prefer the convenience wrapper function
 \code{\link{cv.svyglm}}.
+
+For models other than linear or logistic regression,
+you can use \code{\link{folds.svy}} or \code{\link{folds.svydesign}} to generate
+CV fold IDs that respect any stratification or clustering in the survey design.
+You can then carry out K-fold CV as usual,
+taking care to also use the survey design features and survey weights
+when fitting models in each training set
+and also when evaluating models against each test set.
 }
 \examples{
-# Compare CV MSEs and their SEs under 3 models
+# Compare CV MSEs and their SEs under 3 linear models
 # for a stratified sample and a one-stage cluster sample,
-# from the `survey` package
+# using data from the `survey` package
 library(survey)
 data("api", package = "survey")
 # stratified sample
@@ -63,7 +75,7 @@ cv.svydesign(formulae = c("api00~ell",
                           "api00~ell+meals+mobility"),
              design_object = dclus1, nfolds = 5)
 
-# Compare CV MSEs and their SEs under 3 models
+# Compare CV MSEs and their SEs under 3 linear models
 # for a stratified cluster sample with clusters nested within strata
 data(NSFG_data)
 library(splines)
@@ -73,6 +85,18 @@ cv.svydesign(formulae = c("income ~ ns(age, df = 2)",
                           "income ~ ns(age, df = 3)",
                           "income ~ ns(age, df = 4)"),
              design_object = NSFG.svydes, nfolds = 4)
+
+# Logistic regression example, using the same stratified cluster sample;
+# instead of CV MSE, we calculate CV binary cross-entropy loss,
+# where (as with MSE) lower values indicate better fitting models
+# (NOTE: na.rm=TRUE is not usually ideal;
+#  it's used below purely for convenience, to keep the example short,
+#  but a thorough analysis would look for better ways to handle the missing data)
+cv.svydesign(formulae = c("KnowPreg ~ ns(age, df = 1)",
+                          "KnowPreg ~ ns(age, df = 2)",
+                          "KnowPreg ~ ns(age, df = 3)"),
+             design_object = NSFG.svydes, nfolds = 4,
+             method = "logistic", na.rm = TRUE)
 }
 \seealso{
 \code{\link[survey]{surveysummary}}, \code{\link[survey]{svydesign}}
